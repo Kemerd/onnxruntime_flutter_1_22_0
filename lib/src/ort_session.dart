@@ -35,15 +35,33 @@ class OrtSession {
   List<String> get outputNames => _outputNames;
 
   /// Creates a session from a file.
+  ///
+  /// On Windows, the ONNX Runtime C API expects wide strings (wchar_t*) for
+  /// file paths. Using UTF-8 on Windows causes garbled path encoding and
+  /// "file not found" errors. We use toNativeUtf16() on Windows and
+  /// toNativeUtf8() on other platforms to match the native ORTCHAR_T type.
   OrtSession.fromFile(File modelFile, OrtSessionOptions options) {
     final pp = calloc<ffi.Pointer<bg.OrtSession>>();
+
+    // Windows uses wchar_t (UTF-16) for ORTCHAR_T, all other platforms use
+    // char (UTF-8). Passing UTF-8 on Windows produces garbled mojibake paths.
+    final ffi.Pointer<ffi.Void> pathPtr;
+    if (Platform.isWindows) {
+      pathPtr = modelFile.path.toNativeUtf16().cast<ffi.Void>();
+    } else {
+      pathPtr = modelFile.path.toNativeUtf8().cast<ffi.Void>();
+    }
+
     final statusPtr = OrtEnv.instance.ortApiPtr.ref.CreateSession.asFunction<
             bg.OrtStatusPtr Function(
                 ffi.Pointer<bg.OrtEnv>,
                 ffi.Pointer<ffi.Char>,
                 ffi.Pointer<bg.OrtSessionOptions>,
-                ffi.Pointer<ffi.Pointer<bg.OrtSession>>)>()(OrtEnv.instance.ptr,
-        modelFile.path.toNativeUtf8().cast<ffi.Char>(), options._ptr, pp);
+                ffi.Pointer<ffi.Pointer<bg.OrtSession>>)>()(
+        OrtEnv.instance.ptr,
+        pathPtr.cast<ffi.Char>(),
+        options._ptr,
+        pp);
     OrtStatus.checkOrtStatus(statusPtr);
     _ptr = pp.value;
     calloc.free(pp);
